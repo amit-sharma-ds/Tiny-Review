@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TinyReview — AI Code Review in Your Browser</title>
+  <meta name="description" content="AI-powered code reviewer running 100% in your browser. Zero cost, zero server, zero data leaks. Powered by Gemma 2 2B via WebLLM." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #090910;
+      --bg2:     #0f0f1a;
+      --bg3:     #161625;
+      --bg4:     #1d1d30;
+      --border:  rgba(255,255,255,0.07);
+      --border2: rgba(255,255,255,0.13);
+      --text:    #ddddf0;
+      --muted:   #7777a0;
+      --dim:     #44445a;
+      --accent:  #00f5d4;
+      --accent2: #7c6dff;
+      --red:     #ff5c7a;
+      --amber:   #ffb347;
+      --blue:    #5ca8ff;
+      --green:   #4ddb8c;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Syne', sans-serif;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; }
+
+    /* ─── LOAD OVERLAY ─────────────────────────────────── */
+    #overlay {
+      position: fixed; inset: 0; z-index: 999;
+      background: var(--bg);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px;
+    }
+    #overlay.gone { display: none; }
+
+    .ov-logo { display: flex; align-items: center; gap: 12px; }
+    .ov-badge {
+      background: var(--accent); color: #000;
+      font-family: var(--mono); font-size: 11px; font-weight: 600;
+      padding: 4px 10px; border-radius: 5px; letter-spacing: 2px;
+    }
+    .ov-name { font-size: 32px; font-weight: 800; letter-spacing: -1px; }
+
+    .ov-sub {
+      font-size: 14px; color: var(--muted); text-align: center; line-height: 1.7; max-width: 380px;
+    }
+
+    .ov-bar-wrap { width: 340px; }
+    .ov-track {
+      height: 2px; background: var(--border2); border-radius: 2px; overflow: hidden; margin-bottom: 10px;
+    }
+    .ov-fill {
+      height: 100%; background: linear-gradient(90deg, var(--accent2), var(--accent));
+      border-radius: 2px; width: 0%; transition: width 0.4s ease;
+    }
+    .ov-msg { font-family: var(--mono); font-size: 11px; color: var(--muted); text-align: center; min-height: 16px; }
+
+    .ov-pills {
+      display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+    }
+    .ov-pill {
+      font-family: var(--mono); font-size: 10px;
+      border: 1px solid var(--border2); color: var(--muted);
+      padding: 4px 12px; border-radius: 20px;
+    }
+
+    /* ─── LAYOUT ────────────────────────────────────────── */
+    #app { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ─── HEADER ────────────────────────────────────────── */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px; height: 54px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2); flex-shrink: 0;
+    }
+
+    .h-logo { display: flex; align-items: center; gap: 10px; }
+    .h-badge {
+      background: var(--accent); color: #000;
+      font-family: var(--mono); font-size: 10px; font-weight: 600;
+      padding: 3px 8px; border-radius: 4px; letter-spacing: 1.5px;
+    }
+    .h-name { font-size: 18px; font-weight: 800; letter-spacing: -0.5px; }
+
+    .h-right { display: flex; align-items: center; gap: 14px; }
+
+    .h-status { display: flex; align-items: center; gap: 7px; }
+    .h-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
+      flex-shrink: 0; transition: background 0.3s;
+    }
+    .h-dot.loading { background: var(--amber); animation: blink 1s ease-in-out infinite; }
+    .h-dot.ready   { background: var(--green); }
+    .h-dot.error   { background: var(--red); }
+    .h-status-text { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+    .h-tier {
+      font-family: var(--mono); font-size: 10px;
+      border: 1px solid rgba(0,245,212,0.3); color: var(--accent);
+      padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;
+    }
+
+    .h-kbd {
+      font-family: var(--mono); font-size: 10px; color: var(--dim);
+      border: 1px solid var(--border2); padding: 2px 7px; border-radius: 4px;
+    }
+
+    /* ─── MAIN SPLIT ──────────────────────────────────────── */
+    .main {
+      display: grid; grid-template-columns: 1fr 1fr;
+      flex: 1; overflow: hidden; min-height: 0;
+    }
+
+    /* ─── LEFT PANEL ──────────────────────────────────────── */
+    .left { display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+
+    .pbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 14px; height: 38px;
+      border-bottom: 1px solid var(--border); background: var(--bg2); flex-shrink: 0;
+    }
+    .pbar-label { font-size: 10px; font-weight: 600; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; }
+
+    .lang-sel {
+      font-family: var(--mono); font-size: 11px;
+      background: var(--bg3); color: var(--text);
+      border: 1px solid var(--border2); padding: 3px 8px;
+      border-radius: 4px; cursor: pointer; outline: none;
+    }
+    .lang-sel:focus { border-color: var(--accent); }
+
+    .demo-strip {
+      display: flex; gap: 5px; padding: 8px 14px;
+      border-bottom: 1px solid var(--border); background: var(--bg2);
+      flex-wrap: wrap; flex-shrink: 0;
+    }
+    .chip {
+      font-family: var(--mono); font-size: 10px;
+      padding: 3px 10px; border-radius: 12px;
+      border: 1px solid var(--border2); background: var(--bg3);
+      color: var(--muted); cursor: pointer; transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .chip:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,245,212,0.05); }
+
+    #codeInput {
+      flex: 1; min-height: 0;
+      background: var(--bg); color: var(--text);
+      border: none; outline: none; resize: none;
+      padding: 16px 18px;
+      font-family: var(--mono); font-size: 13px; line-height: 1.75;
+      tab-size: 2; caret-color: var(--accent);
+    }
+    #codeInput::placeholder { color: var(--dim); }
+
+    .action-bar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; border-top: 1px solid var(--border);
+      background: var(--bg2); flex-shrink: 0;
+    }
+
+    #reviewBtn {
+      flex: 1;
+      background: var(--accent); color: #000;
+      border: none; padding: 11px 20px; border-radius: 7px;
+      font-family: var(--sans); font-size: 14px; font-weight: 700;
+      cursor: pointer; letter-spacing: 0.2px;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    #reviewBtn:hover:not(:disabled) { opacity: 0.88; }
+    #reviewBtn:active:not(:disabled) { transform: scale(0.98); }
+    #reviewBtn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .char-count { font-family: var(--mono); font-size: 10px; color: var(--dim); white-space: nowrap; }
+    .cost-tag   { font-family: var(--mono); font-size: 11px; color: var(--green); white-space: nowrap; }
+
+    /* ─── RIGHT PANEL ──────────────────────────────────────── */
+    .right { display: flex; flex-direction: column; }
+
+    .output-body { flex: 1; overflow-y: auto; padding: 16px; min-height: 0; }
+    .output-body::-webkit-scrollbar { width: 4px; }
+    .output-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+    /* empty/loading */
+    .state-center {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; gap: 16px; text-align: center;
+    }
+    .state-icon {
+      width: 52px; height: 52px; border: 1px dashed var(--border2);
+      border-radius: 14px; display: flex; align-items: center; justify-content: center;
+      font-size: 22px; color: var(--muted);
+    }
+    .state-text { font-size: 13px; color: var(--muted); line-height: 1.75; }
+
+    .spinner {
+      width: 36px; height: 36px;
+      border: 2px solid var(--border2); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin  { to { transform: rotate(360deg); } }
+    @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.25; } }
+
+    /* streaming */
+    .stream-box {
+      font-family: var(--mono); font-size: 12px; line-height: 1.85;
+      color: var(--text); white-space: pre-wrap; word-break: break-word;
+    }
+    .cursor {
+      display: inline-block; width: 8px; height: 14px;
+      background: var(--accent); border-radius: 1px;
+      animation: blink 0.8s step-end infinite;
+      vertical-align: text-bottom; margin-left: 1px;
+    }
+
+    /* result cards */
+    .rsec { margin-bottom: 16px; }
+
+    .rtag {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 10px; font-weight: 700;
+      padding: 3px 11px; border-radius: 20px; margin-bottom: 9px;
+      letter-spacing: 1px; text-transform: uppercase;
+    }
+    .rtag-bug  { background: rgba(255,92,122,0.1); color: var(--red);   border: 1px solid rgba(255,92,122,0.25); }
+    .rtag-sec  { background: rgba(255,179,71,0.1); color: var(--amber); border: 1px solid rgba(255,179,71,0.25); }
+    .rtag-imp  { background: rgba(92,168,255,0.1); color: var(--blue);  border: 1px solid rgba(92,168,255,0.25); }
+    .rtag-good { background: rgba(77,219,140,0.1); color: var(--green); border: 1px solid rgba(77,219,140,0.25); }
+
+    .rcard {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 11px 14px; margin-bottom: 7px;
+      font-size: 13px; line-height: 1.7; color: var(--text);
+      transition: border-color 0.15s;
+    }
+    .rcard:hover { border-color: var(--border2); }
+    .rcard code {
+      background: var(--bg3); padding: 1px 6px; border-radius: 3px;
+      font-family: var(--mono); font-size: 11px; color: var(--accent);
+    }
+
+    /* summary box */
+    .summary-box {
+      background: var(--bg3); border: 1px solid var(--border2);
+      border-left: 3px solid var(--accent2);
+      border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;
+      font-size: 13px; color: var(--muted); line-height: 1.7;
+      font-style: italic;
+    }
+
+    /* scores */
+    .score-section { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; }
+    .score-title { font-size: 10px; font-weight: 600; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin-bottom: 12px; }
+
+    .score-row { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
+    .score-lbl { font-size: 11px; color: var(--muted); min-width: 95px; }
+    .score-track { flex: 1; height: 3px; background: var(--border2); border-radius: 2px; overflow: hidden; }
+    .score-fill  { height: 100%; border-radius: 2px; width: 0%; transition: width 1.2s cubic-bezier(0.4,0,0.2,1); }
+    .score-num   { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 26px; text-align: right; }
+
+    /* model footer */
+    .mfooter {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 14px; padding: 11px 14px;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+    }
+    .mfooter-l { font-family: var(--mono); font-size: 10px; color: var(--muted); line-height: 1.7; }
+    .mfooter-r { font-family: var(--mono); font-size: 12px; color: var(--green); font-weight: 600; }
+
+    /* output status bar */
+    .out-status {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 14px; height: 38px;
+      border-bottom: 1px solid var(--border); background: var(--bg2); flex-shrink: 0;
+    }
+    .out-status-text { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
+    /* ─── RESPONSIVE ──────────────────────────────────────── */
+    @media (max-width: 720px) {
+      html, body { overflow: auto; }
+      .main { grid-template-columns: 1fr; grid-template-rows: auto auto; }
+      .left  { height: 55vh; }
+      .right { height: auto; min-height: 60vh; }
+      .output-body { overflow: visible; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ─── LOAD OVERLAY ───────────────────────────────────────── -->
+<div id="overlay">
+  <div class="ov-logo">
+    <span class="ov-badge">TINY</span>
+    <span class="ov-name">TinyReview</span>
+  </div>
+  <p class="ov-sub">
+    Loading <strong style="color:var(--text)">Gemma 2 2B</strong> into your browser.<br>
+    This only happens once — then it's cached offline.
+  </p>
+  <div class="ov-bar-wrap">
+    <div class="ov-track"><div class="ov-fill" id="ovFill"></div></div>
+    <div class="ov-msg" id="ovMsg">Initializing WebLLM engine...</div>
+  </div>
+  <div class="ov-pills">
+    <span class="ov-pill">100% private</span>
+    <span class="ov-pill">zero cost</span>
+    <span class="ov-pill">works offline</span>
+    <span class="ov-pill">Tier 1 model</span>
+  </div>
+</div>
+
+<!-- ─── APP ───────────────────────────────────────────────── -->
+<div id="app">
+
+  <!-- HEADER -->
+  <header>
+    <div class="h-logo">
+      <span class="h-badge">TINY</span>
+      <span class="h-name">TinyReview</span>
+    </div>
+    <div class="h-right">
+      <span class="h-kbd">Ctrl+Enter to review</span>
+      <div class="h-status">
+        <div class="h-dot loading" id="hDot"></div>
+        <span class="h-status-text" id="hText">Loading model...</span>
+      </div>
+      <span class="h-tier">Tier 1 · Absolute Garage</span>
+    </div>
+  </header>
+
+  <!-- MAIN SPLIT -->
+  <div class="main">
+
+    <!-- LEFT: INPUT -->
+    <div class="left">
+      <div class="pbar">
+        <span class="pbar-label">Code Input</span>
+        <select class="lang-sel" id="langSel">
+          <option>Python</option>
+          <option>JavaScript</option>
+          <option>TypeScript</option>
+          <option>Go</option>
+          <option>Rust</option>
+          <option>Java</option>
+          <option>C++</option>
+          <option>PHP</option>
+          <option>Ruby</option>
+        </select>
+      </div>
+      <div class="demo-strip">
+        <span class="chip" onclick="loadDemo('sql')">SQL Injection</span>
+        <span class="chip" onclick="loadDemo('loop')">Infinite Loop</span>
+        <span class="chip" onclick="loadDemo('auth')">Weak Auth</span>
+        <span class="chip" onclick="loadDemo('async')">Async Bug</span>
+        <span class="chip" onclick="loadDemo('clean')">Clean Code ✓</span>
+      </div>
+      <textarea id="codeInput" spellcheck="false"
+        placeholder="# Paste your code here...
+# Or click a demo chip above to try an example.
+#
+# Ctrl+Enter to review."></textarea>
+      <div class="action-bar">
+        <button id="reviewBtn" onclick="startReview()" disabled>⏳ Loading model...</button>
+        <span class="char-count" id="charCount">0 chars</span>
+        <span class="cost-tag">$0.00</span>
+      </div>
+    </div>
+
+    <!-- RIGHT: OUTPUT -->
+    <div class="right">
+      <div class="out-status">
+        <span class="pbar-label">AI Review</span>
+        <span class="out-status-text" id="outStatus">waiting...</span>
+      </div>
+      <div class="output-body" id="outBody">
+        <div class="state-center" id="emptyState">
+          <div class="state-icon">⟶</div>
+          <p class="state-text">
+            Paste code on the left and hit<br>
+            <strong style="color:var(--text)">Review Code</strong>.<br><br>
+            <span style="font-size:11px;opacity:0.6">
+              Gemma 2 2B · WebLLM · 100% in-browser<br>
+              No server · No API key · Zero cost · Private
+            </span>
+          </p>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script type="module">
+// ─── IMPORT WEBLLM ──────────────────────────────────────────
+import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+
+// ─── STATE ──────────────────────────────────────────────────
+let engine = null;
+let ready = false;   // true = real model, 'fallback' = static analysis
+let reviewing = false;
+let t0 = 0;
+
+// ─── DOM HELPERS ────────────────────────────────────────────
+const $  = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// ─── CHAR COUNT ─────────────────────────────────────────────
+$('codeInput').addEventListener('input', () => {
+  const n = $('codeInput').value.length;
+  $('charCount').textContent = n.toLocaleString() + ' chars';
+});
+
+// ─── DEMO SNIPPETS ──────────────────────────────────────────
+const DEMOS = {
+  sql: {
+    lang: 'Python',
+    code: `def get_user(username):
+    # Fetch user by name from DB
+    query = "SELECT * FROM users WHERE name = " + username
+    result = db.execute(query)
+    return result
+
+def delete_user(user_id):
+    db.execute("DELETE FROM users WHERE id = " + str(user_id))
+`
+  },
+  loop: {
+    lang: 'JavaScript',
+    code: `function fetchWithRetry(url) {
+  let data = null;
+  let retries = 0;
+  while (data === null) {
+    try {
+      // BUG: fetch is async but we're using it synchronously
+      data = fetch(url).json();
+    } catch (e) {
+      retries++;
+      // No max retry limit - this can loop forever
+    }
+  }
+  return data;
+}
+`
+  },
+  auth: {
+    lang: 'Python',
+    code: `def login(username, password):
+    user = db.find_user(username)
+    # Comparing plain text passwords - never do this!
+    if user.password == password:
+        return generate_token(user)
+    return None
+
+# Hardcoded secrets in source code
+ADMIN_PASSWORD = "admin123"
+JWT_SECRET = "my-secret-key-do-not-share"
+DB_PASSWORD = "password123"
+`
+  },
+  async: {
+    lang: 'JavaScript',
+    code: `async function loadDashboard(userId) {
+  // These three calls are completely independent
+  // but we're waiting for each one before starting the next
+  const user    = await fetchUser(userId);
+  const posts   = await fetchPosts(userId);
+  const friends = await fetchFriends(userId);
+  const likes   = await fetchLikes(userId);
+
+  return { user, posts, friends, likes };
+}
+`
+  },
+  clean: {
+    lang: 'Python',
+    code: `def calculate_statistics(numbers: list[float]) -> dict:
+    """Calculate basic statistics for a list of numbers.
+
+    Args:
+        numbers: A non-empty list of numeric values.
+
+    Returns:
+        Dict with mean, median, min, max, and count.
+
+    Raises:
+        ValueError: If the input list is empty.
+        TypeError: If any element is not numeric.
+    """
+    if not numbers:
+        raise ValueError("Cannot calculate stats for empty list")
+
+    if not all(isinstance(n, (int, float)) for n in numbers):
+        raise TypeError("All elements must be numeric")
+
+    sorted_nums = sorted(numbers)
+    n = len(sorted_nums)
+    mid = n // 2
+    median = sorted_nums[mid] if n % 2 else (sorted_nums[mid-1] + sorted_nums[mid]) / 2
+
+    return {
+        "mean":   sum(numbers) / n,
+        "median": median,
+        "min":    sorted_nums[0],
+        "max":    sorted_nums[-1],
+        "count":  n,
+    }
+`
+  }
+};
+
+window.loadDemo = function(key) {
+  const d = DEMOS[key];
+  if (!d) return;
+  $('codeInput').value = d.code;
+  $('langSel').value = d.lang;
+  $('charCount').textContent = d.code.length.toLocaleString() + ' chars';
+};
+
+// ─── INIT MODEL ─────────────────────────────────────────────
+async function initModel() {
+  try {
+    const MODEL = "gemma-2-2b-it-q4f16_1-MLC";
+
+    engine = await webllm.CreateMLCEngine(MODEL, {
+      initProgressCallback: (p) => {
+        const pct = Math.round((p.progress || 0) * 100);
+        $('ovFill').style.width = pct + '%';
+        $('ovMsg').textContent  = p.text || 'Loading...';
+      }
+    });
+
+    ready = true;
+    $('overlay').classList.add('gone');
+    $('hDot').className  = 'h-dot ready';
+    $('hText').textContent = 'Gemma 2 2B · ready';
+    $('reviewBtn').disabled = false;
+    $('reviewBtn').textContent = 'Review Code →';
+
+  } catch (err) {
+    console.error('WebLLM init failed:', err);
+    ready = 'fallback';
+    $('overlay').classList.add('gone');
+    $('hDot').className  = 'h-dot ready';
+    $('hText').textContent = 'Demo mode (WebGPU unavailable)';
+    $('reviewBtn').disabled = false;
+    $('reviewBtn').textContent = 'Review Code →';
+  }
+}
+
+// ─── PROMPT BUILDER ─────────────────────────────────────────
+function buildPrompt(code, lang) {
+  return `You are a senior code reviewer. Analyze this ${lang} code and respond ONLY with a valid JSON object. No markdown, no explanation, just JSON.
+
+Required JSON structure:
+{
+  "bugs": ["string", ...],
+  "security": ["string", ...],
+  "improvements": ["string", ...],
+  "strengths": ["string", ...],
+  "scores": { "security": number, "quality": number, "bugs": number },
+  "summary": "string"
+}
+
+Rules:
+- scores are integers 0-100 (100 = perfect, 0 = critical failure)
+- Each array should have 0-4 items
+- Be specific and actionable
+- bugs: logical errors, crashes, incorrect behavior
+- security: vulnerabilities, data exposure, injection risks
+- improvements: performance, readability, best practices
+- strengths: what the code does well
+
+Code to review (${lang}):
+\`\`\`
+${code.slice(0, 2500)}
+\`\`\`
+
+JSON only:`;
+}
+
+// ─── STATIC FALLBACK ANALYZER ───────────────────────────────
+function staticAnalyze(code, lang) {
+  const lo = code.toLowerCase();
+  const r = {
+    bugs: [], security: [], improvements: [], strengths: [],
+    scores: { security: 80, quality: 72, bugs: 82 },
+    summary: "Static analysis complete. Install Chrome 113+ with WebGPU for real AI review."
+  };
+
+  // SQL injection
+  if ((lo.includes('select') || lo.includes('delete') || lo.includes('insert')) &&
+      (lo.includes('" +') || lo.includes("' +") || lo.includes('+ "'))) {
+    r.bugs.push("SQL query built via string concatenation — user input flows directly into query string.");
+    r.security.push("Critical SQL injection vulnerability. Attacker can read, modify, or delete all database data. Use parameterized queries immediately.");
+    r.scores.security = 8; r.scores.bugs = 18;
+  }
+
+  // Infinite loop
+  if (lo.includes('while') && !lo.includes('max_retries') && !lo.includes('retry_limit') && !lo.includes('break')) {
+    r.bugs.push("While loop with no visible exit condition or retry cap — may hang indefinitely on failure.");
+    r.scores.bugs = Math.min(r.scores.bugs, 30);
+  }
+
+  // Async misuse
+  if (lo.includes('fetch(') && !lo.includes('await') && !lo.includes('.then(')) {
+    r.bugs.push("fetch() called without await or .then() — returns a Promise, not data. This is a common async bug.");
+  }
+
+  // Sequential awaits
+  if ((lo.match(/await /g) || []).length >= 3) {
+    r.improvements.push("Multiple sequential awaits on independent operations. Use Promise.all() to run them in parallel — can be 2–4× faster.");
+  }
+
+  // Hardcoded secrets
+  if (lo.match(/password\s*=\s*["'][^"']+["']/) || lo.match(/secret\s*=\s*["']/) || lo.match(/api_key\s*=\s*["']/)) {
+    r.security.push("Hardcoded credentials detected. These will be committed to version control. Use environment variables (os.environ, process.env) instead.");
+    r.scores.security = Math.min(r.scores.security, 15);
+  }
+
+  // Plain text password compare
+  if (lo.includes('password') && (lo.includes('== ') || lo.includes('==='))) {
+    r.security.push("Plain-text password comparison found. Store and compare using bcrypt or argon2 — never raw strings.");
+    r.scores.security = Math.min(r.scores.security, 20);
+  }
+
+  // Good things
+  if (lo.includes('"""') || lo.includes("'''") || lo.includes('/**')) r.strengths.push("Docstrings / JSDoc present — good for maintainability.");
+  if (lo.includes('raise ') || lo.includes('throw '))                 r.strengths.push("Explicit error handling found — exceptions raised for invalid states.");
+  if (lo.includes(': list') || lo.includes(': str') || lo.includes(': int') || lo.includes(': float')) r.strengths.push("Type hints used — improves IDE support and catches bugs early.");
+  if (lo.includes('try') && (lo.includes('catch') || lo.includes('except'))) r.strengths.push("Try/catch block present — graceful error handling.");
+
+  if (r.bugs.length === 0 && r.security.length === 0) {
+    r.improvements.push("Add input validation for all external data before processing.");
+    r.improvements.push("Consider adding unit tests for edge cases (empty input, nulls, large values).");
+    if (r.strengths.length === 0) r.strengths.push("No critical bugs or security issues detected by static analysis.");
+    r.summary = "Code looks clean. A few minor improvements suggested for production-readiness.";
+  } else {
+    r.summary = `Found ${r.bugs.length} bug(s) and ${r.security.length} security issue(s) that need attention before deployment.`;
+  }
+  return r;
+}
+
+// ─── REVIEW ─────────────────────────────────────────────────
+window.startReview = async function() {
+  const code = $('codeInput').value.trim();
+  if (!code || reviewing) return;
+  if (code.length < 10) { alert("Please paste some code first!"); return; }
+
+  reviewing = true;
+  t0 = Date.now();
+  const lang = $('langSel').value;
+  const btn  = $('reviewBtn');
+
+  btn.disabled = true;
+  btn.textContent = 'Analyzing...';
+  $('outStatus').textContent = 'running inference...';
+  $('emptyState')?.remove();
+
+  const body = $('outBody');
+
+  try {
+    let parsed;
+
+    if (ready === 'fallback') {
+      body.innerHTML = `<div class="state-center"><div class="spinner"></div><p class="state-text" style="margin-top:12px">Running static analysis...</p></div>`;
+      await sleep(1600 + Math.random() * 600);
+      parsed = staticAnalyze(code, lang);
+    } else {
+      // Real WebLLM — show streaming
+      body.innerHTML = `<div style="padding:4px"><div class="stream-box" id="streamBox"></div><span class="cursor"></span></div>`;
+
+      const prompt = buildPrompt(code, lang);
+      let raw = '';
+
+      const stream = await engine.chat.completions.create({
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 700,
+        stream: true,
+      });
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content || '';
+        raw += delta;
+        const el = $('streamBox');
+        if (el) el.textContent = raw;
+      }
+
+      // Extract JSON robustly
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("Model did not return valid JSON");
+
+      let attempt = match[0];
+      // Sometimes model adds trailing commas — try to fix
+      attempt = attempt.replace(/,\s*([}\]])/g, '$1');
+      parsed = JSON.parse(attempt);
+
+      // Validate & fill defaults
+      ['bugs','security','improvements','strengths'].forEach(k => {
+        if (!Array.isArray(parsed[k])) parsed[k] = [];
+      });
+      if (!parsed.scores || typeof parsed.scores !== 'object') {
+        parsed.scores = { security: 70, quality: 70, bugs: 70 };
+      }
+      if (!parsed.summary) parsed.summary = "Review complete.";
+    }
+
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    renderResult(parsed, lang, elapsed);
+
+  } catch (err) {
+    console.error(err);
+    body.innerHTML = `
+      <div class="state-center">
+        <div class="state-icon" style="color:var(--red)">⚠</div>
+        <p class="state-text">
+          Analysis failed.<br>
+          <span style="font-size:11px;color:var(--red)">${esc(err.message)}</span><br><br>
+          <span style="font-size:11px;opacity:0.6">Try a shorter snippet or refresh the page.</span>
+        </p>
+      </div>`;
+    $('outStatus').textContent = 'error';
+  } finally {
+    reviewing = false;
+    btn.disabled = false;
+    btn.textContent = 'Review Code →';
+  }
+};
+
+// ─── RENDER RESULT ──────────────────────────────────────────
+function renderResult(r, lang, elapsed) {
+  const body = $('outBody');
+  const clamp = v => Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+  let html = '';
+
+  if (r.summary) {
+    html += `<div class="summary-box">${esc(r.summary)}</div>`;
+  }
+
+  const sections = [
+    { key: 'bugs',         cls: 'rtag-bug',  label: '🐛  Bugs Found' },
+    { key: 'security',     cls: 'rtag-sec',  label: '🔒  Security Issues' },
+    { key: 'improvements', cls: 'rtag-imp',  label: '💡  Improvements' },
+    { key: 'strengths',    cls: 'rtag-good', label: '✓  Strengths' },
+  ];
+
+  sections.forEach(({ key, cls, label }) => {
+    const items = r[key] || [];
+    if (!items.length) return;
+    html += `<div class="rsec"><span class="rtag ${cls}">${label}</span>`;
+    items.forEach(item => { html += `<div class="rcard">${esc(item)}</div>`; });
+    html += `</div>`;
+  });
+
+  const s = r.scores;
+  html += `
+  <div class="score-section">
+    <div class="score-title">Scores</div>
+    <div class="score-row">
+      <span class="score-lbl">Security</span>
+      <div class="score-track"><div class="score-fill" style="background:var(--green)" data-w="${clamp(s.security)}"></div></div>
+      <span class="score-num">${clamp(s.security)}</span>
+    </div>
+    <div class="score-row">
+      <span class="score-lbl">Code quality</span>
+      <div class="score-track"><div class="score-fill" style="background:var(--blue)" data-w="${clamp(s.quality)}"></div></div>
+      <span class="score-num">${clamp(s.quality)}</span>
+    </div>
+    <div class="score-row">
+      <span class="score-lbl">Bug-free</span>
+      <div class="score-track"><div class="score-fill" style="background:var(--amber)" data-w="${clamp(s.bugs)}"></div></div>
+      <span class="score-num">${clamp(s.bugs)}</span>
+    </div>
+  </div>
+  <div class="mfooter">
+    <div class="mfooter-l">
+      gemma-2-2b-it-q4f16_1 · WebLLM · ${ready === 'fallback' ? 'static fallback' : 'in-browser GPU'}<br>
+      ${elapsed}s · ${lang} · code never leaves your device
+    </div>
+    <div class="mfooter-r">cost: $0.0000</div>
+  </div>`;
+
+  body.innerHTML = html;
+  $('outStatus').textContent = `done · ${elapsed}s`;
+
+  // Animate bars after paint
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.querySelectorAll('.score-fill[data-w]').forEach(el => {
+      el.style.width = el.dataset.w + '%';
+    });
+  }));
+}
+
+// ─── KEYBOARD SHORTCUT ──────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    window.startReview();
+  }
+});
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ─── BOOT ───────────────────────────────────────────────────
+initModel();
+</script>
+</body>
+</html>
