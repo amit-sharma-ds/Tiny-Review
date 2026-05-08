@@ -1,6 +1,6 @@
 # ⚡ TinyReview — AI Code Reviewer (Tier 1)
 
-## 🚀 Live Dem
+## 🚀 Live Demo
 https://tinyreview.vercel.app
 
 ![](https://github.com/amit-sharma-ds/Tiny-Review/blob/main/tinyreview/photo_2026-05-04_18-40-39.jpg)
