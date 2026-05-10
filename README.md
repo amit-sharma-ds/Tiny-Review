@@ -1,4 +1,4 @@
-# ⚡ TinyReview — AI Code Reviewer (Tier 1)
+# ⚡ TinyReview — AI Code Reviewer (Tier 1
 
 ## 🚀 Live Demo
 https://tinyreview.vercel.app
